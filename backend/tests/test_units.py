@@ -182,3 +182,33 @@ def test_iqvia_scales_by_region():
 def test_non_english_query_not_flagged_off_topic():
     g = scan_input("मेटफॉर्मिन के लिए भारत में नए संकेतों का विश्लेषण करें कृपया अभी")
     assert g.allowed
+
+
+# ------------------------------------------------------------- latency paths ----
+
+@pytest.mark.parametrize("q,mol,ind,angle", [
+    ("Is there a dosage-form opportunity for budesonide in eosinophilic esophagitis?", "budesonide",
+     "Eosinophilic esophagitis", "dosage form"),
+    ("Evaluate metformin for adolescent PCOS", "metformin", "Polycystic ovary syndrome", "patient population"),
+])
+def test_fast_path_plans_unambiguous_queries_without_llm(q, mol, ind, angle):
+    from repurpora.nodes.core import fast_plan
+
+    p = fast_plan(q)
+    assert p and p.molecule == mol and p.indication == ind and p.angle == angle
+    assert {"iqvia", "patent", "clinical_trials"} <= set(p.workers)
+
+
+@pytest.mark.parametrize("q", ["what about its patents?", "Assess tirzepatide for NASH", "hi"])
+def test_fast_path_defers_ambiguous_queries_to_llm(q):
+    from repurpora.nodes.core import fast_plan
+
+    assert fast_plan(q) is None
+
+
+def test_deterministic_note_states_only_computed_metrics():
+    from repurpora.agents.workers import run_worker
+
+    r = run_worker("patent", {"molecule": "colchicine"})  # default: deterministic notes, no LLM
+    m = r.metrics
+    assert f"{m['fto_risk_score']}/10" in r.summary and str(m["active_patents"]) in r.summary

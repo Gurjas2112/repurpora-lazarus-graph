@@ -78,6 +78,13 @@ class Settings(BaseSettings):
 
     # --- guardrails / budgets ------------------------------------------------
     max_workers_per_query: int = 6
+    worker_llm_notes: bool = False  # deterministic notes by default (faster, cannot hallucinate)
+    planner_fast_path: bool = True  # rule-based plan when molecule/therapy area is unambiguous
+    redraft_with_fast_model: bool = False  # rejected by A/B (coverage 0.71 -> 0.37); kept for reproducibility
+    # brief length budget: words = base + per_agent x agents. A/B: 150/30 vs 220/45 -> p50 120 s -> 94 s,
+    # coverage 0.71 -> 0.74 (docs/PERFORMANCE_AND_INFERENCE.md)
+    synth_words_base: int = 150
+    synth_words_per_agent: int = 30
     max_redrafts: int = 1
     max_input_chars: int = 4000
     context_token_budget: int = 6000

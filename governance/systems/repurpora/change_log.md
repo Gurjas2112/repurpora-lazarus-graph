@@ -15,3 +15,5 @@
 | 2026-11-14 | Archive SQL agent + `archive_reader` role with RLS | Archived reports could not be queried from chat; a validator-only design had a comma-join bypass found in review | backend/tests/test_sql_agent.py |
 | 2026-11-14 | Admin panel + runtime config (kill switch, model/gate/agent toggles) | Settings required redeploys; no operator view of usage, cost or quality | backend/tests/test_admin_mcp.py |
 | 2026-11-14 | Outbound MCP server (OAuth 2.1 resource server via Supabase) | Let external MCP clients reuse the research tools; internal calls stay in-process | backend/tests/test_admin_mcp.py |
+| 2026-11-15 | Latency work: deterministic notes, planner fast path, single judge call, concise brief budget (150+30 words) | p50 ~127 s on laptop GPU | evals/results/ab_*.json, docs/PERFORMANCE_AND_INFERENCE.md |
+| 2026-11-15 | Rejected: 3B redraft of 7B draft | coverage 0.71 -> 0.37 in A/B | evals/results/ab_hybrid_7b_draft_3b_redraft.json |

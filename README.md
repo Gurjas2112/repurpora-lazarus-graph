@@ -20,7 +20,7 @@ A master agent fans out to market, trade, patent, clinical-trial, internal-RAG a
 <p align="center">
 <img alt="python" src="https://img.shields.io/badge/python-3.12-3776AB"/>
 <img alt="langgraph" src="https://img.shields.io/badge/LangGraph-1.2-1C3C3C"/>
-<img alt="tests" src="https://img.shields.io/badge/tests-93%20passing-2EA44F"/>
+<img alt="tests" src="https://img.shields.io/badge/tests-99%20passing-2EA44F"/>
 <img alt="deploy" src="https://img.shields.io/badge/deployed-Vercel%20%2B%20Railway-black"/>
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
 </p>
@@ -111,6 +111,18 @@ mis-routed. The fixes were **post-hoc citation attribution** (a citation is adde
 contains the claim's numbers and wording), a **routing floor** in code, and **section-aware prompts**.
 Full tables: [`baseline_v1.md`](backend/evals/results/baseline_v1.md) → [`latest.md`](backend/evals/results/latest.md).
 
+### Speed: what was measured and changed ([full write-up](docs/PERFORMANCE_AND_INFERENCE.md))
+
+| 6-question A/B, cold cache, 6 GB laptop GPU | p50 latency | Evidence coverage |
+|---|---|---|
+| Before | ~127 s | 0.73 |
+| **Shipped**: deterministic agent notes, planner fast path, single judge call, concise briefs | **94 s** | **0.74** |
+| Optional all-3B "fast mode" (switchable in the admin panel) | 34 s | 0.56 (below the 0.75 gate) |
+
+The remaining time is hardware-bound: the 7B is partly offloaded to CPU on 6 GB. On a 24 GB cloud GPU (vLLM on
+g6.xlarge) the same quality profile is projected at roughly 35–50 s. The same document covers why **multimodal RAG**
+and **fine-tuning** are not needed yet, and when they would be.
+
 ### ML opportunity scorer: a complete modelling workflow
 
 The scorer follows a standard data-science workflow, end to end, in [`backend/src/repurpora/ml/`](backend/src/repurpora/ml):
@@ -170,7 +182,7 @@ context budget.
 | **Read research and apply it** | [`essential_docs/`](essential_docs) papers (DrugRAG, production RAG, AHP product selection) → evidence-gated RAG and selection criteria |
 | **Cloud and containers** | AWS (EC2 GPU IaC, S3, Secrets Manager, CloudWatch via LocalStack), Docker Compose (10 services), Railway, Vercel |
 | **Vector DBs, embeddings, LangChain** | Supabase pgvector (HNSW index), nomic embeddings, LangChain + LangGraph 1.x |
-| **Testing** | 93 pytest tests (unit, ML workflow, SQL-agent attack corpus, admin RBAC, MCP, graph integration with a fake LLM, AWS emulator) + Playwright end-to-end recording |
+| **Testing** | 99 pytest tests (unit, ML workflow, SQL-agent attack corpus, admin RBAC, MCP, graph integration with a fake LLM, AWS emulator) + Playwright end-to-end recording |
 
 ---
 
@@ -346,7 +358,7 @@ cd backend && uv run python scripts/make_synthetic_internal_docs.py && uv run py
 ## Test and evaluate
 ```bash
 cd backend
-uv run pytest                                  # 93 tests (AWS tests auto-skip if LocalStack is off)
+uv run pytest                                  # 99 tests (AWS tests auto-skip if LocalStack is off)
 uv run python evals/run_evals.py --langsmith   # 12-question golden set → evals/results/latest.md
 uv run python evals/rag_bench.py               # chunking benchmark
 uv run python -m repurpora.ml.opportunity_scorer --train   # retrain + metrics
@@ -358,7 +370,7 @@ cd ../frontend && npx playwright test          # smoke + recorded walkthrough
 |---|---|
 | Railway | `railway up backend --path-as-root -s agent-server` and `-s mock-apis` (with `RAILWAY_DOCKERFILE_PATH=Dockerfile.mockapi`) |
 | Vercel | `cd frontend && vercel deploy --prod` |
-| AWS GPU (production) | `infra/aws/ec2_ollama.sh` (g4dn.xlarge, IMDSv2, encrypted disk, port 443 only); `infra/aws/teardown.sh` stops it |
+| AWS GPU (production) | `ENGINE=vllm infra/aws/ec2_ollama.sh` (g6.xlarge L4, vLLM OpenAI API; `ENGINE=ollama` for a pilot); `infra/aws/teardown.sh` stops it. See [PERFORMANCE_AND_INFERENCE.md](docs/PERFORMANCE_AND_INFERENCE.md) §4 |
 
 Operations guide: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 

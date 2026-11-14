@@ -152,6 +152,54 @@ _KNOWN_AREAS = ["respiratory", "metabolic", "cardiovascular", "oncology", "cns",
                 "gastro", "anti-infective", "women's health"]
 
 
+_ANGLE_FORM = re.compile(r"dosage|formulation|film|suspension|orodispersible|modified[- ]release|patch|inhal|injectable", re.I)
+_ANGLE_POP = re.compile(r"paediatric|pediatric|child|adolescent|elderly|geriatric|pregnan|population", re.I)
+_FOLLOWUP = re.compile(r"\b(it|this|that|these|those|same|above|previous answer|the report|why|explain)\b", re.I)
+
+
+_ABBREVIATIONS = {"pcos": "Polycystic ovary syndrome", "eoe": "Eosinophilic esophagitis", "ipf": "Idiopathic pulmonary fibrosis",
+                  "ascvd": "Atherosclerotic CVD (secondary prevention)", "bos": "Bronchiolitis obliterans syndrome",
+                  "iga nephropathy": "IgA nephropathy", "tb": "Pulmonary tuberculosis", "t2d": "Type 2 diabetes"}
+
+
+def _known_indications() -> list[str]:
+    from repurpora.mock_apis.data import DISEASE_BURDEN_INDIA
+
+    names = {d[0] for d in DISEASE_BURDEN_INDIA}
+    for prof in MOLECULES.values():
+        names |= {c[0] for c in prof["candidates"]} | set(prof["approved"])
+    return sorted(names, key=len, reverse=True)
+
+
+class _SkipJudge(Exception):
+    pass
+
+
+class _FastPathUsed(Exception):
+    pass
+
+
+def fast_plan(text: str) -> ResearchPlan | None:
+    """Rule-based plan for unambiguous queries (curated molecule or a named therapy area). None -> use the LLM."""
+    t = text.lower()
+    if _FOLLOWUP.search(t) or len(t.split()) < 3:
+        return None
+    mol = next((m for m in MOLECULES if re.search(rf"\b{m}\b", t)), None)
+    area = next((a.title() for a in _KNOWN_AREAS if a in t), None)
+    if not mol and not area:
+        return None
+    ind = next((d for d in _known_indications() if d.lower() in t), None)
+    if not ind:
+        ind = next((full for abbr, full in _ABBREVIATIONS.items() if re.search(rf"\b{abbr}\b", t)), None)
+    angle = "dosage form" if _ANGLE_FORM.search(t) else "patient population" if _ANGLE_POP.search(t) else None
+    from repurpora.regions import detect
+
+    workers = ALL_WORKERS if mol else ["iqvia", "web", "internal"]
+    return ResearchPlan(intent="research", molecule=mol, indication=ind, therapy_area=None if mol else area,
+                        region=detect(text), angle=angle, workers=workers,
+                        sub_queries={"web": text[:200], "internal": text[:200]})
+
+
 def heuristic_plan(text: str) -> ResearchPlan:
     t = text.lower()
     mol = next((m for m in MOLECULES if m in t), None)
@@ -199,12 +247,21 @@ def planner(state: ResearchState, config: RunnableConfig) -> Command[Literal["wo
                    f"region={prior.get('region')}")
     ctx += memory.context_lines(mem_state)
     plan: ResearchPlan
+    fp = fast_plan(text) if get_settings().planner_fast_path else None
+    if fp is not None:
+        plan = fp  # unambiguous query: skip the LLM planner entirely (saves a model call and a model swap)
+    else:
+        plan = None  # type: ignore[assignment]
     try:
+        if plan is not None:
+            raise _FastPathUsed
         llm = get_llm("primary").with_structured_output(ResearchPlan, method="json_schema")
         plan = llm.invoke([SystemMessage(PLANNER_SYS.format(context="\n".join(ctx) or "none")), HumanMessage(text)],
                           config={"run_name": "master_planner"})
         if plan.intent == "research" and not plan.workers:
             plan.workers = heuristic_plan(text).workers
+    except _FastPathUsed:
+        pass
     except Exception as exc:
         log.warning("structured planning failed (%s) -> heuristic planner", exc)
         plan = heuristic_plan(text)
@@ -424,14 +481,16 @@ def synthesizer(state: ResearchState, config: RunnableConfig) -> dict:
     ctx = _compact_context(state)
     judge = state.get("judge") or {}
     n_ran = len([r for r in state.get("results", []) if not r.get("error")])
-    system = SYNTH_SYS.format(sections=_sections_for(state), words=220 + 45 * n_ran)
+    st = get_settings()
+    system = SYNTH_SYS.format(sections=_sections_for(state), words=st.synth_words_base + st.synth_words_per_agent * n_ran)
     msgs = [SystemMessage(system), HumanMessage(f"User question: {_last_user_text(state)}\n\n{ctx}")]
     if judge.get("uncited"):
         msgs.append(HumanMessage("Revise: these claims lacked valid citations or were unsupported - fix or remove "
                                  "them:\n- " + "\n- ".join(judge["uncited"][:8])))
         msgs.insert(2, AIMessage(state.get("draft", "")))
     try:
-        draft = str(get_llm("primary").invoke(msgs, config={"run_name": "synthesizer"}).content)
+        role = "fast" if (judge.get("uncited") and get_settings().redraft_with_fast_model) else "primary"
+        draft = str(get_llm(role).invoke(msgs, config={"run_name": "synthesizer"}).content)
     except Exception as exc:
         log.error("synthesizer LLM failed: %s", exc)
         draft = _fallback_synthesis(state)
@@ -465,21 +524,26 @@ def judge(state: ResearchState, config: RunnableConfig) -> Command[Literal["synt
     cov, uncited = coverage(draft, ids)
     cacc = citation_accuracy(draft, ids)
     faith, unsupported = None, []
+    from repurpora import runtime_config
+
+    rc = runtime_config.get()
+    will_redraft = cov < rc.evidence_coverage_threshold and state.get("redrafts", 0) < rc.max_redrafts
     try:
+        if will_redraft:  # deterministic coverage already decided; skip the LLM judge on drafts we discard
+            raise _SkipJudge
         raw = get_llm("fast", json_mode=True).invoke(
             [SystemMessage(JUDGE_SYS),
              HumanMessage(f"EVIDENCE:\n{evidence_digest([Evidence(**e) for e in state.get('evidence', [])], 180)}"
                           f"\n\nDRAFT:\n{draft}")], config={"run_name": "judge"}).content
         j = json.loads(raw)
         faith, unsupported = int(j.get("faithfulness", 0)), list(j.get("unsupported", []))[:5]
+    except _SkipJudge:
+        pass
     except Exception as exc:
         log.info("llm judge unavailable: %s", exc)
     verdict = {"evidence_coverage": round(cov, 3), "citation_accuracy": round(cacc, 3), "auto_attributed": n_attr,
                "faithfulness": faith, "uncited": (uncited + unsupported)[:8]}
     audit("judge", verdict, thread, owner)
-    from repurpora import runtime_config
-
-    rc = runtime_config.get()
     needs_redraft = (cov < rc.evidence_coverage_threshold or (faith is not None and faith <= 2))
     if needs_redraft and state.get("redrafts", 0) < rc.max_redrafts:
         return Command(goto="synthesizer", update={"judge": verdict, "draft": draft,

@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
-TYPE="${INSTANCE_TYPE:-g4dn.xlarge}"
+TYPE="${INSTANCE_TYPE:-g6.xlarge}"          # L4 24 GB: 7B fully on GPU; g4dn.xlarge (T4 16 GB) is the budget option
+ENGINE="${ENGINE:-ollama}"                  # ollama (pilot) | vllm (production throughput)
 NAME="repurpora-ollama"
 EP=()
 [[ -n "${AWS_ENDPOINT_URL:-}" ]] && EP=(--endpoint-url "$AWS_ENDPOINT_URL")
@@ -34,7 +35,11 @@ if [[ -z "$SG" || "$SG" == "None" ]]; then
   "${AWS[@]}" ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port 80 --cidr 0.0.0.0/0 >/dev/null
 fi
 
-UD=$(sed "s/__OLLAMA_PROXY_TOKEN__/$TOKEN/" user_data.sh)
+if [[ "$ENGINE" == "vllm" ]]; then
+  UD=$(sed "s/__VLLM_API_KEY__/$TOKEN/" user_data_vllm.sh)
+else
+  UD=$(sed "s/__OLLAMA_PROXY_TOKEN__/$TOKEN/" user_data.sh)
+fi
 IID=$("${AWS[@]}" ec2 run-instances "${DRY[@]}" --image-id "$AMI" --instance-type "$TYPE" \
   --security-group-ids "$SG" --user-data "$UD" \
   --metadata-options HttpTokens=required,HttpEndpoint=enabled \
@@ -45,4 +50,8 @@ EIP=$("${AWS[@]}" ec2 allocate-address --domain vpc --query AllocationId)
 "${AWS[@]}" ec2 associate-address --instance-id "$IID" --allocation-id "$EIP" >/dev/null || true
 IP=$("${AWS[@]}" ec2 describe-addresses --allocation-ids "$EIP" --query 'Addresses[0].PublicIp')
 echo "instance=$IID sg=$SG eip=$IP"
-echo "OLLAMA_BASE_URL=https://${IP//./-}.sslip.io  (after user-data finishes, ~10 min)"
+if [[ "$ENGINE" == "vllm" ]]; then
+  echo "LLM_PROVIDER=openai OPENAI_BASE_URL=https://${IP//./-}.sslip.io/v1  (after user-data finishes, ~15 min)"
+else
+  echo "OLLAMA_BASE_URL=https://${IP//./-}.sslip.io  (after user-data finishes, ~10 min)"
+fi

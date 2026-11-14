@@ -298,11 +298,42 @@ def run_worker(agent: str, plan: dict[str, Any], query: str = "", with_note: boo
         log.exception("worker %s failed", agent)
         res = WorkerResult(agent=agent, error=f"{type(exc).__name__}: {exc}"[:300])
     if with_note and not res.error and res.evidence:
-        res.summary = _note(agent, res)
+        from repurpora.settings import get_settings
+
+        res.summary = _note(agent, res) if get_settings().worker_llm_notes else deterministic_note(agent, res)
     elif not res.summary:
         res.summary = "; ".join(res.flags) or (res.error or "")
     res.latency_ms = int((time.perf_counter() - t0) * 1000)
     return res
+
+
+def deterministic_note(agent: str, res: WorkerResult) -> str:
+    """Analyst note built from computed metrics: no LLM call, so it cannot state anything the data does not."""
+    m = res.metrics
+    lines: list[str] = []
+    if agent == "iqvia" and m.get("best_opportunity"):
+        lines.append(f"- Best white-space indication: {m['best_opportunity']} (${m.get('best_market_usd_mn', 0):,.0f}M, "
+                     f"CAGR {m.get('best_cagr_pct', 0):.1f}%, {m.get('best_competitors', '?')} competitors, "
+                     f"{m.get('best_patients_mn', 0):.1f}M patients).")
+        if m.get("molecule_sales_cagr_pct") is not None:
+            lines.append(f"- Molecule sales growing {m['molecule_sales_cagr_pct']:.1f}% a year "
+                         f"(latest ${m.get('molecule_sales_latest_usd_mn', 0):,.0f}M).")
+    elif agent == "exim":
+        lines.append(f"- API sourcing: top supplier {m.get('top_supplier')} at {m.get('top_supplier_share', 0):.0%} share; "
+                     f"concentration risk {m.get('sourcing_risk')} (HHI {m.get('supplier_hhi')}).")
+        lines.append(f"- Imports changed {m.get('import_growth_pct', 0):+.1f}% over five years.")
+    elif agent == "patent":
+        lines.append(f"- FTO risk {m.get('fto_risk_score')}/10 ({m.get('fto_band')}): {m.get('active_patents')} active filings, "
+                     f"{m.get('expiring_within_3y')} expiring within 3 years; latest expiry {m.get('latest_expiry') or 'n/a'}.")
+    elif agent == "clinical_trials":
+        lines.append(f"- {m.get('total_trials')} registered trials, {m.get('active_trials')} active "
+                     f"({m.get('phase3_trials', 0)} phase 3); trial saturation {m.get('trial_saturation')}.")
+    elif agent == "internal":
+        lines.append(f"- {m.get('internal_hits')} relevant internal passages found ({m.get('retrieval_mode')}).")
+    elif agent == "web":
+        lines.append(f"- {m.get('web_results')} web sources retrieved ({'live' if m.get('live_source') else 'mock proxy'}).")
+    lines += [f"- {f}" for f in res.flags[:2]]
+    return "\n".join(lines)
 
 
 def _note(agent: str, res: WorkerResult) -> str:
