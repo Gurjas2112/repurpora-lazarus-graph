@@ -36,7 +36,17 @@ class SupabaseTokenVerifier:
     """Verify Supabase-issued JWTs (ES256 via JWKS, aud=authenticated) and map them to MCP access tokens."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        import hmac
+
         from repurpora.auth import verify
+        from repurpora.vault import get_secret
+
+        service = get_secret("MCP_SERVICE_TOKEN")
+        if service and len(service) >= 24 and hmac.compare_digest(token, service):
+            # machine-to-machine principal (e.g. another agent using this server as an external MCP tool).
+            # It has no user identity, so user-scoped tools (my_reports, private documents) return nothing personal.
+            return AccessToken(token=token, client_id="service", scopes=[SCOPE], subject="service:repurpora",
+                               claims={"role": "service"})
 
         try:
             claims = verify(token)
@@ -49,7 +59,9 @@ class SupabaseTokenVerifier:
 
 def _caller() -> str | None:
     tok = get_access_token()
-    return tok.subject if tok else None
+    if not tok or (tok.subject or "").startswith("service:"):
+        return None if not tok else tok.subject
+    return tok.subject
 
 
 def _audited(tool: str, args: dict[str, Any]) -> str | None:

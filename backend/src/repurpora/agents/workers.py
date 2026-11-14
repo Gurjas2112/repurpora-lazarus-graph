@@ -272,8 +272,78 @@ def run_web(plan: dict[str, Any], tb: ToolBudget, query: str) -> WorkerResult:
     return res
 
 
+# ------------------------------------------------------------ external MCP ----
+
+MCP_SYS = (
+    "You can call tools on external MCP servers to gather evidence for a pharmaceutical repurposing question. "
+    "Call at most 3 tools, only ones clearly relevant to the question; fill arguments from the research plan. "
+    "If no tool is relevant, call none. Do not answer the question yourself."
+)
+
+
+def run_mcp(plan: dict[str, Any], tb: ToolBudget, query: str) -> WorkerResult:
+    """Use the user's selected, admin-approved external MCP servers as an MCP client."""
+    from repurpora import mcp_registry
+    from repurpora.llm import get_llm
+
+    res = WorkerResult(agent="mcp")
+    servers = mcp_registry.get_servers(plan.get("mcp_servers") or [])
+    if not servers:
+        res.error = "no enabled MCP servers selected"
+        return res
+    catalog: dict[str, tuple[Any, str]] = {}
+    tools = []
+    for srv in servers:
+        try:
+            for t in mcp_registry.list_tools(srv):
+                fq = f"{srv.slug}__{t['name']}"[:64]
+                catalog[fq] = (srv, t["name"], set(((t.get("input_schema") or {}).get("properties") or {}).keys()))
+                tools.append({"type": "function", "function": {
+                    "name": fq, "description": f"[{srv.name}] {t.get('title') or ''} {t.get('description') or ''}"[:900],
+                    "parameters": t.get("input_schema") or {"type": "object", "properties": {}}}})
+        except Exception as exc:
+            res.flags.append(f"MCP server '{srv.name}' unavailable ({type(exc).__name__})")
+    if not tools:
+        res.error = "no tools available from the selected MCP servers"
+        return res
+    brief = (f"Question: {query}\nPlan: molecule={plan.get('molecule')}, indication={plan.get('indication')}, "
+             f"therapy_area={plan.get('therapy_area')}, region={plan.get('region')}")
+    try:
+        ai = get_llm("primary").bind_tools(tools).invoke([SystemMessage(MCP_SYS), HumanMessage(brief)],
+                                                         config={"run_name": "mcp_tool_selection"})
+        calls = list(getattr(ai, "tool_calls", []) or [])
+    except Exception as exc:
+        res.error = f"tool selection failed: {type(exc).__name__}"
+        return res
+    rows = []
+    for call in calls:
+        if call.get("name") not in catalog:
+            continue
+        srv, tool, allowed_args = catalog[call["name"]]
+        args = {k: v for k, v in (call.get("args") or {}).items() if k in allowed_args}  # drop hallucinated params
+        try:
+            text, is_err = tb.call(call["name"], mcp_registry.call_tool, srv, tool, args)
+        except PermissionError as exc:
+            res.flags.append(str(exc))
+            break
+        except Exception as exc:
+            rows.append([srv.name, tool, "error", type(exc).__name__])
+            continue
+        rows.append([srv.name, tool, "error" if is_err else "ok", f"{len(text)} chars"])
+        if not is_err and text.strip():
+            res.evidence.append(Evidence(agent="mcp", source=f"MCP: {srv.name}", trust="external",
+                                         title=f"{tool}({', '.join(f'{k}={v}' for k, v in list(args.items())[:3])})",
+                                         snippet=sanitize_untrusted(text[:900]), url=srv.url))
+    res.tables.append(Table(title="External MCP tool calls", columns=["server", "tool", "status", "result"],
+                            rows=rows, evidence_ids=["mcp"]))
+    res.metrics.update({"mcp_servers": len(servers), "mcp_tools_offered": len(tools), "mcp_calls": len(rows)})
+    if not rows:
+        res.flags.append("The model found no relevant external MCP tool for this question.")
+    return res
+
+
 RUNNERS = {"iqvia": run_iqvia, "exim": run_exim, "patent": run_patent, "clinical_trials": run_trials}
-QUERY_RUNNERS = {"internal": run_internal, "web": run_web}
+QUERY_RUNNERS = {"internal": run_internal, "web": run_web, "mcp": run_mcp}
 
 NOTE_PROMPT = (
     "You are the {agent} analyst in a pharma repurposing team. Write 2-3 crisp bullet points "
@@ -330,6 +400,8 @@ def deterministic_note(agent: str, res: WorkerResult) -> str:
                      f"({m.get('phase3_trials', 0)} phase 3); trial saturation {m.get('trial_saturation')}.")
     elif agent == "internal":
         lines.append(f"- {m.get('internal_hits')} relevant internal passages found ({m.get('retrieval_mode')}).")
+    elif agent == "mcp":
+        lines.append(f"- {m.get('mcp_calls', 0)} external MCP tool call(s) across {m.get('mcp_servers', 0)} server(s).")
     elif agent == "web":
         lines.append(f"- {m.get('web_results')} web sources retrieved ({'live' if m.get('live_source') else 'mock proxy'}).")
     lines += [f"- {f}" for f in res.flags[:2]]

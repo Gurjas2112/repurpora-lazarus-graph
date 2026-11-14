@@ -94,6 +94,23 @@ server is an OAuth 2.1 **resource server**: Supabase is the authorization server
 the scope is `repurpora:read`, and RFC 9728 protected-resource metadata is served. User-scoped tools
 (`internal_knowledge`, `my_reports`) use the token's `sub`. Every call is audited. Host-header checks guard against DNS rebinding.
 
+## Agent as MCP client (external MCP servers)
+
+```
+Chat "Tools" menu ──► configurable.mcp_servers=[ids] ──► planner adds `mcp` worker (opt-in only)
+admin registry (mcp_servers table: https URL, vault secret NAME, tool allow-list, enabled)
+mcp worker: tools/list (5 min cache) -> LLM bind_tools -> <= 3 tools/call (30 s each, schema-filtered args)
+            -> sanitize_untrusted -> Evidence(trust="external") -> "External Tool Findings (MCP)" section
+```
+| Control | Detail |
+|---|---|
+| SSRF guard | `validate_url`: HTTPS only; private, loopback, link-local and reserved addresses rejected; dev hosts only through `MCP_OUTBOUND_ALLOWED_HOSTS` |
+| Secrets | Resolved from the vault at call time by name |
+| Repurpora's own server | Also accepts a machine-to-machine `MCP_SERVICE_TOKEN` (no user identity, so user-scoped tools return nothing personal) |
+
+Known limitation: the 7B writer sometimes cites external evidence under another section's heading. The citation is
+still valid, and section placement is a candidate for the fine-tuning plan in `PERFORMANCE_AND_INFERENCE.md`.
+
 ## Admin panel and runtime config
 
 ```

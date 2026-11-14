@@ -158,8 +158,10 @@ def config_history(limit: int = Query(50, ge=1, le=500), admin: Admin = Depends(
 @router.get("/agents")
 def agents(admin: Admin = Depends(require_admin)) -> list[dict]:
     disabled = set(runtime_config.get().disabled_agents)
-    return [{"agent": a, "tools": sorted(t), "enabled": a not in disabled} for a, t in TOOL_ALLOWLIST.items()
+    rows = [{"agent": a, "tools": sorted(t), "enabled": a not in disabled} for a, t in TOOL_ALLOWLIST.items()
             if a in runtime_config.ALL_AGENTS]
+    rows.append({"agent": "mcp", "tools": ["per-server allow-list (MCP servers registry)"], "enabled": "mcp" not in disabled})
+    return rows
 
 
 @router.get("/rag/documents")
@@ -244,3 +246,105 @@ def audit_log(event: str | None = None, limit: int = Query(100, ge=1, le=1000),
     else:
         rows = _q("select ts, event, owner, thread_id, detail from audit_log order by ts desc limit %s", (limit,))
     return [{"ts": t.isoformat(), "event": e, "owner": o, "thread_id": th, "detail": d} for t, e, o, th, d in rows]
+
+
+# ------------------------------------------------------------ external MCP servers --
+
+class McpServerIn(BaseModel):
+    name: str = Field(min_length=2, max_length=60, pattern=r"^[A-Za-z0-9 ._()\-]+$")
+    url: str = Field(min_length=8, max_length=300)
+    description: str | None = Field(default=None, max_length=300)
+    auth_mode: Literal["none", "bearer_secret"] = "none"
+    auth_secret_name: str | None = Field(default=None, max_length=80, pattern=r"^[A-Z][A-Z0-9_]*$")
+    allowed_tools: list[str] = Field(default_factory=list, max_length=50)
+    enabled: bool = True
+
+
+def _validate_server(body: McpServerIn) -> None:
+    from repurpora.mcp_registry import UnsafeUrl, validate_url
+
+    try:
+        validate_url(body.url)
+    except UnsafeUrl as exc:
+        raise HTTPException(422, f"unsafe MCP URL: {exc}") from exc
+    if body.auth_mode == "bearer_secret" and not body.auth_secret_name:
+        raise HTTPException(422, "auth_secret_name is required for bearer_secret (store the token in the vault)")
+
+
+@router.get("/mcp-servers")
+def mcp_servers(admin: Admin = Depends(require_admin)) -> list[dict]:
+    from dataclasses import asdict
+
+    from repurpora.mcp_registry import list_servers
+
+    return [asdict(s) for s in list_servers()]
+
+
+@router.post("/mcp-servers")
+def create_mcp_server(body: McpServerIn, admin: Admin = Depends(require_admin)) -> dict:
+    from repurpora.db import conn
+
+    _validate_server(body)
+    try:
+        with conn() as c:
+            row = c.execute(
+                "insert into mcp_servers(name, url, description, auth_mode, auth_secret_name, allowed_tools, enabled, "
+                "created_by) values (%s,%s,%s,%s,%s,%s,%s,%s) returning id",
+                (body.name, body.url, body.description, body.auth_mode, body.auth_secret_name, body.allowed_tools,
+                 body.enabled, admin.email or admin.id)).fetchone()
+    except Exception as exc:
+        raise HTTPException(409, "a server with this name already exists") from exc
+    audit("admin_mcp_server_create", {"id": row[0], "name": body.name, "url": body.url}, owner=admin.id)
+    return {"id": row[0]}
+
+
+@router.put("/mcp-servers/{sid}")
+def update_mcp_server(sid: int, body: McpServerIn, admin: Admin = Depends(require_admin)) -> dict:
+    from repurpora.db import conn
+    from repurpora.mcp_registry import clear_cache
+
+    _validate_server(body)
+    with conn() as c:
+        row = c.execute(
+            "update mcp_servers set name=%s, url=%s, description=%s, auth_mode=%s, auth_secret_name=%s, "
+            "allowed_tools=%s, enabled=%s, updated_at=now() where id=%s returning id",
+            (body.name, body.url, body.description, body.auth_mode, body.auth_secret_name, body.allowed_tools,
+             body.enabled, sid)).fetchone()
+    if not row:
+        raise HTTPException(404, "server not found")
+    clear_cache(sid)
+    audit("admin_mcp_server_update", {"id": sid, "enabled": body.enabled, "url": body.url}, owner=admin.id)
+    return {"id": sid}
+
+
+@router.delete("/mcp-servers/{sid}")
+def delete_mcp_server(sid: int, admin: Admin = Depends(require_admin)) -> dict:
+    from repurpora.db import conn
+    from repurpora.mcp_registry import clear_cache
+
+    with conn() as c:
+        row = c.execute("delete from mcp_servers where id=%s returning name", (sid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "server not found")
+    clear_cache(sid)
+    audit("admin_mcp_server_delete", {"id": sid, "name": row[0]}, owner=admin.id)
+    return {"deleted": sid}
+
+
+@router.post("/mcp-servers/{sid}/test")
+def test_mcp_server(sid: int, admin: Admin = Depends(require_admin)) -> dict:
+    """Live connection test: initialize + tools/list (bypasses the cache)."""
+    import time as _t
+
+    from repurpora.mcp_registry import list_servers, list_tools
+
+    srv = next((s for s in list_servers() if s.id == sid), None)
+    if not srv:
+        raise HTTPException(404, "server not found")
+    t0 = _t.time()
+    try:
+        tools = list_tools(srv, use_cache=False)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}", "ms": int((_t.time() - t0) * 1000)}
+    return {"ok": True, "ms": int((_t.time() - t0) * 1000),
+            "tools": [{"name": t["name"], "title": t.get("title"), "read_only": t.get("read_only")} for t in tools]}

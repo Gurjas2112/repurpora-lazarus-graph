@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Trust = Literal["internal", "regulatory", "registry", "licensed_db", "web", "synthetic"]
+Trust = Literal["internal", "regulatory", "registry", "licensed_db", "web", "external", "synthetic"]
 
 
 class Evidence(BaseModel):

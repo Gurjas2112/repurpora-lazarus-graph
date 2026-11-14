@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 
 from repurpora.evidence import Evidence
 
-WorkerName = Literal["iqvia", "exim", "patent", "clinical_trials", "internal", "web"]
+WorkerName = Literal["iqvia", "exim", "patent", "clinical_trials", "internal", "web", "mcp"]
 ALL_WORKERS: list[str] = ["iqvia", "exim", "patent", "clinical_trials", "internal", "web"]
 
 

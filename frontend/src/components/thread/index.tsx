@@ -14,6 +14,7 @@ import {
 } from "@/lib/ensure-tool-responses";
 import { RepurporaMark } from "../brand/logo";
 import { ChatToolbar, SAMPLE_PROMPTS } from "./repurpora-extras";
+import { getMcpSelection } from "@/lib/mcp-selection";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
@@ -141,9 +142,12 @@ export function Thread() {
     };
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
+    const mcpServers = getMcpSelection();
     stream.submit(
       { messages: [...toolMessages, newHumanMessage] },
       {
+        // user-selected, admin-approved external MCP servers for this run (read by the planner)
+        config: { configurable: { mcp_servers: mcpServers } },
         streamMode: ["values"],
         optimisticValues: (prev) => ({
           ...prev,

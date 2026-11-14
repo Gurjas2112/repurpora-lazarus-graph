@@ -79,6 +79,17 @@ def profile(molecule: str):
     return data.molecule_profile(molecule)
 
 
+@app.get("/mcp-servers")
+def approved_mcp_servers(authorization: str | None = Header(default=None)):
+    """Admin-approved external MCP servers a signed-in user may enable for a chat (no secrets returned)."""
+    from repurpora.auth import user_from_bearer
+    from repurpora.mcp_registry import list_servers
+
+    user_from_bearer(authorization)
+    return [{"id": s.id, "name": s.name, "description": s.description, "allowed_tools": s.allowed_tools}
+            for s in list_servers(enabled_only=True)]
+
+
 @app.get("/reports/{report_id}/url")
 def report_url(report_id: str, authorization: str | None = Header(default=None)):
     """Return a fresh signed URL for an archived report (Supabase Storage)."""

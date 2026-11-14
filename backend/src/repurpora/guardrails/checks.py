@@ -124,7 +124,14 @@ TOOL_ALLOWLIST: dict[str, set[str]] = {
 MAX_TOOL_CALLS_PER_AGENT = 4
 
 
+MAX_MCP_CALLS = 3
+
+
 def authorize_tool(agent: str, tool: str, calls_so_far: int) -> tuple[bool, str]:
+    if agent == "mcp":  # external MCP tools: allow-list enforced per server by the registry; tighter budget here
+        if calls_so_far >= MAX_MCP_CALLS:
+            return False, "external MCP tool-call budget exhausted"
+        return True, "allow"
     if tool not in TOOL_ALLOWLIST.get(agent, set()):
         return False, f"tool '{tool}' not allow-listed for agent '{agent}'"
     if calls_so_far >= MAX_TOOL_CALLS_PER_AGENT:

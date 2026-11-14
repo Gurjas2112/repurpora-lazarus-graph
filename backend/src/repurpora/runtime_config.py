@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from repurpora.settings import get_settings
 
 log = logging.getLogger(__name__)
-ALL_AGENTS = ["iqvia", "exim", "patent", "clinical_trials", "internal", "web"]
+ALL_AGENTS = ["iqvia", "exim", "patent", "clinical_trials", "internal", "web", "mcp"]
 _TTL_S = 15
 _cache: dict[str, Any] = {"at": 0.0, "cfg": None}
 

@@ -200,3 +200,21 @@ create table if not exists app_config_history (
 );
 alter table app_config enable row level security;
 alter table app_config_history enable row level security;
+
+-- ------------------------------------------- External MCP server registry (v4) ----
+-- Admin-approved MCP servers the agent may call as a client. Credentials are NOT stored here:
+-- auth_secret_name points to a secret in the vault (AWS Secrets Manager) / environment.
+create table if not exists mcp_servers (
+  id               bigserial primary key,
+  name             text not null unique,
+  url              text not null,
+  description      text,
+  auth_mode        text not null default 'none' check (auth_mode in ('none', 'bearer_secret')),
+  auth_secret_name text,
+  allowed_tools    text[] not null default '{}',   -- empty = all tools the server lists
+  enabled          boolean not null default true,
+  created_by       text,
+  created_at       timestamptz default now(),
+  updated_at       timestamptz default now()
+);
+alter table mcp_servers enable row level security;

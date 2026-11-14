@@ -35,6 +35,13 @@ deployment**: Vercel frontend → Railway Aegra agent server → Supabase. The L
 | `31`–`32` | `tools/call`: `patent_landscape` (USPTO clone) and `opportunity_score` (calibrated ML) with live latencies |
 | `33` | `tools/call` on `my_reports` (user-scoped SQL agent) and the full **JSON-RPC wire log**, tokens redacted |
 
+| **Agent as MCP client: external servers in chat**, recorded by `frontend/e2e/mcp-client.spec.ts` | |
+| `mcp_client_in_chat_walkthrough.mp4` | The user opts in to an admin-approved external MCP server, then runs research |
+| `34`–`35` | Chat **Tools** menu: admin-approved external MCP servers; enabling one for this browser's chats |
+| `36` | The master agent's plan now includes the **External MCP tools** agent |
+| `37` | Brief section "External Tool Findings (MCP)" with citations to external evidence |
+| `38` | Key data: external MCP tool-call table cited with real evidence ids [E24]–[E26] |
+
 The admin recording used a dedicated demo admin account whose role was **revoked** right after recording, so no
 standing admin account exists on the public demo. Grant one with `backend/scripts/make_admin.py <email>`.
 

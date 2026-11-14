@@ -11,3 +11,9 @@ runtime_config:
   propagation: graph reads with 15 s TTL - no redeploy
   kill_switch: guard_input refuses all requests with the maintenance message; audited as kill_switch_refusal
 audit_events: [admin_config_update, admin_role_change, admin_suspend, admin_unsuspend, admin_rag_delete]
+mcp_client:
+  registry: admin-only (mcp_servers table); users can only opt in to enabled servers per chat
+  url_policy: https only; private/loopback/link-local/reserved IPs rejected (SSRF); dev allow-list MCP_OUTBOUND_ALLOWED_HOSTS
+  credentials: vault secret name only (auth_secret_name); never stored or displayed
+  runtime: <= 3 calls / run, 30 s timeout per call, schema-filtered arguments, sanitised outputs, trust=external evidence
+  audit_events: [admin_mcp_server_create, admin_mcp_server_update, admin_mcp_server_delete, tool_call(agent=mcp)]

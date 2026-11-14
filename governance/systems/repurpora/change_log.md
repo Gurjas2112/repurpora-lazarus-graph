@@ -17,3 +17,5 @@
 | 2026-11-14 | Outbound MCP server (OAuth 2.1 resource server via Supabase) | Let external MCP clients reuse the research tools; internal calls stay in-process | backend/tests/test_admin_mcp.py |
 | 2026-11-15 | Latency work: deterministic notes, planner fast path, single judge call, concise brief budget (150+30 words) | p50 ~127 s on laptop GPU | evals/results/ab_*.json, docs/PERFORMANCE_AND_INFERENCE.md |
 | 2026-11-15 | Rejected: 3B redraft of 7B draft | coverage 0.71 -> 0.37 in A/B | evals/results/ab_hybrid_7b_draft_3b_redraft.json |
+| 2026-11-15 | Agent as MCP client: admin MCP server registry, per-chat opt-in Tools menu, `mcp` worker (SSRF guard, vault-named secrets, schema-filtered args, 3-call budget, sanitised external evidence), MCP service token | Let the agent use client-provided MCP data sources | backend/tests/test_mcp_client.py |
+| 2026-11-15 | Fix: key-data tables cited agent names instead of evidence ids | Found during the MCP e2e test | backend/tests/test_graph.py |

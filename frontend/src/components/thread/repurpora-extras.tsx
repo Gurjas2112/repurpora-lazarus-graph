@@ -5,6 +5,7 @@ import { FileUp, LogOut, LoaderCircle, Home, ShieldCheck, Plug } from "lucide-re
 import { toast } from "sonner";
 import { authHeaders, useAuth } from "@/providers/Auth";
 import { Button } from "../ui/button";
+import { McpToolsPicker } from "./mcp-tools-picker";
 
 export const SAMPLE_PROMPTS = [
   {
@@ -91,6 +92,7 @@ export function ChatToolbar() {
           <ShieldCheck className="size-4" /> <span className="hidden md:inline">Admin</span>
         </a>
       )}
+      <McpToolsPicker />
       <a href="/developers" title="MCP server / developers" aria-label="MCP server" data-testid="developers-link"
          className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-teal-700 hover:bg-teal-50">
         <Plug className="size-4" /> <span className="hidden md:inline">MCP</span>

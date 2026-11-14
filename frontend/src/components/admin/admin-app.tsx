@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   LogOut,
   MessageSquare,
+  Plug,
   Power,
   RefreshCw,
   ScrollText,
@@ -37,6 +38,7 @@ import {
 import { useAuth } from "@/providers/Auth";
 import { RepurporaMark } from "@/components/brand/logo";
 import { AdminError, AdminUser, Overview, RuntimeConfig, adminFetch } from "@/lib/admin-api";
+import { McpServersTab } from "./mcp-servers-tab";
 
 // Chart colours: categorical slots 1-2 and the reserved status palette (validated reference palette).
 const SERIES_1 = "#2a78d6";
@@ -46,11 +48,12 @@ const NEUTRAL = "#8a8985";
 const GRID = "#e7e6e2";
 const AXIS = { fontSize: 11, fill: "#52514e" };
 
-type Tab = "overview" | "models" | "knowledge" | "users" | "audit";
+type Tab = "overview" | "models" | "knowledge" | "mcp" | "users" | "audit";
 const TABS: { id: Tab; label: string; icon: typeof Gauge }[] = [
   { id: "overview", label: "Overview", icon: Gauge },
   { id: "models", label: "Models & safety", icon: Bot },
   { id: "knowledge", label: "Agents & knowledge", icon: BookOpen },
+  { id: "mcp", label: "MCP servers", icon: Plug },
   { id: "users", label: "Users & roles", icon: Users },
   { id: "audit", label: "Audit log", icon: ScrollText },
 ];
@@ -153,6 +156,7 @@ export function AdminApp() {
         {tab === "overview" && <OverviewTab />}
         {tab === "models" && <ModelsTab />}
         {tab === "knowledge" && <KnowledgeTab />}
+        {tab === "mcp" && <McpServersTab />}
         {tab === "users" && <UsersTab />}
         {tab === "audit" && <AuditTab />}
       </main>
@@ -638,7 +642,8 @@ function UsersTab() {
 // ------------------------------------------------------------------- audit --
 
 const AUDIT_EVENTS = ["", "guard_input", "plan", "tool_call", "judge", "archive", "sql_agent", "mcp_tool_call", "memory_write",
-  "memory_forget", "dlp_redaction", "kill_switch_refusal", "admin_config_update", "admin_role_change", "admin_suspend", "admin_rag_delete"];
+  "memory_forget", "dlp_redaction", "kill_switch_refusal", "admin_config_update", "admin_role_change", "admin_suspend", "admin_rag_delete",
+  "admin_mcp_server_create", "admin_mcp_server_update", "admin_mcp_server_delete"];
 
 function AuditTab() {
   const [event, setEvent] = useState("");

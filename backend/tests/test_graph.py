@@ -107,3 +107,10 @@ def test_memory_versioning_profile_show_and_forget(graph):
     gone = graph.invoke({"messages": [("user", "Please forget my history")]}, _cfg("t10"))
     assert "erased" in gone["messages"][-1].content
     assert not store.search(("users", "u1", "memories"))
+
+
+def test_key_data_tables_cite_real_evidence_ids(graph):
+    out = graph.invoke({"messages": [("user", "Assess montelukast repurposing in India")]}, _cfg("t11"))
+    final = out["messages"][-1].content
+    assert "[iqvia]" not in final and "[patent]" not in final
+    assert "_(iqvia)_ [E" in final

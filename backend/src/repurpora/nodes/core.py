@@ -287,8 +287,14 @@ def planner(state: ResearchState, config: RunnableConfig) -> Command[Literal["wo
     disabled = set(runtime_config.get().disabled_agents)  # admin can switch agents off at runtime
     if disabled:
         plan.workers = [w for w in plan.workers if w not in disabled] or             [w for w in ("web", "iqvia", "internal") if w not in disabled][:1]
+    selected_mcp = [int(x) for x in ((config or {}).get("configurable", {}).get("mcp_servers") or [])
+                    if str(x).isdigit()][:5]
+    if not selected_mcp and "mcp" in plan.workers:
+        plan.workers.remove("mcp")  # never call external servers unless the user opted in for this chat
+    if plan.intent == "research" and selected_mcp and "mcp" not in disabled and "mcp" not in plan.workers:
+        plan.workers.append("mcp")  # user opted in for this chat; admin-approved servers only
     audit("plan", plan.model_dump(), thread, owner)
-    pd_ = {**plan.model_dump(), "region_explicit": region_explicit}
+    pd_ = {**plan.model_dump(), "region_explicit": region_explicit, "mcp_servers": selected_mcp}
 
     if plan.intent == "archive_query":
         return Command(goto="sql_agent", update={"plan": pd_, "step_log": ["planner: archive_query (llm)"]})
@@ -298,7 +304,8 @@ def planner(state: ResearchState, config: RunnableConfig) -> Command[Literal["wo
         return Command(goto="follow_up", update={"plan": {**prior, "followup": True}})
 
     label = {"iqvia": "IQVIA Insights", "exim": "EXIM Trends", "patent": "Patent Landscape",
-             "clinical_trials": "Clinical Trials", "internal": "Internal Knowledge", "web": "Web Intelligence"}
+             "clinical_trials": "Clinical Trials", "internal": "Internal Knowledge", "web": "Web Intelligence",
+             "mcp": "External MCP tools"}
     subject = (plan.molecule or plan.therapy_area or "the portfolio question").title()
     note = (f"🧭 **Research plan** for **{subject}** ({plan.region}"
             f"{', ' + plan.indication if plan.indication else ''}) → dispatching "
@@ -430,6 +437,7 @@ SECTION_SPEC = {
     "exim": "## Supply chain (EXIM)",
     "internal": "## Internal knowledge insights",
     "web": "## Guidelines & publications",
+    "mcp": "## External tool findings (MCP)",
     "story": "## Innovative product story  (concrete proposal: new indication / dosage form / population; cite the "
              "innovation-hypothesis or candidate evidence plus supporting evidence)",
     "risks": "## Risks & next steps  (3 bullets)",
@@ -442,7 +450,7 @@ def _sections_for(state: ResearchState) -> str:
     keys = ["summary"]
     if "iqvia" in ran or plan.get("molecule"):
         keys.append("unmet")
-    keys += [k for k in ("iqvia", "clinical_trials", "patent", "exim", "internal", "web") if k in ran]
+    keys += [k for k in ("iqvia", "clinical_trials", "patent", "exim", "internal", "web", "mcp") if k in ran]
     if plan.get("molecule"):
         keys.append("story")
     keys.append("risks")
@@ -494,8 +502,21 @@ def synthesizer(state: ResearchState, config: RunnableConfig) -> dict:
     except Exception as exc:
         log.error("synthesizer LLM failed: %s", exc)
         draft = _fallback_synthesis(state)
+    draft = _ensure_mcp_section(draft, state)
     return {"draft": draft, "redrafts": state.get("redrafts", 0) + (1 if judge else 0),
             "step_log": ["synthesizer: drafted"]}
+
+
+def _ensure_mcp_section(draft: str, state: ResearchState) -> str:
+    """If external MCP evidence exists but the writer skipped it, append a cited, evidence-only section."""
+    ext = [e for e in state.get("evidence", []) if e.get("agent") == "mcp"]
+    if not ext or "external tool findings" in draft.lower():
+        return draft
+    lines = ["", "## External tool findings (MCP)"]
+    for e in ext[:4]:
+        snip = " ".join(e["snippet"].split())[:180]
+        lines.append(f"- {e['source'].replace('MCP: ', '')} · {e['title']}: {snip} [{e['id']}]")
+    return draft.rstrip() + "\n" + "\n".join(lines)
 
 
 def _fallback_synthesis(state: ResearchState) -> str:
@@ -607,16 +628,21 @@ def finalize(state: ResearchState, config: RunnableConfig) -> dict:
     sc, rep, j = state.get("scores") or {}, state.get("report") or {}, state.get("judge") or {}
     out = [state.get("draft", "")]
     out.append("\n---\n### 📊 Key data")
+    by_agent: dict[str, list[str]] = {}
+    for e in state.get("evidence", []):
+        by_agent.setdefault(e["agent"], []).append(e["id"])
     for r in state.get("results", []):
         if r.get("tables"):
             t = r["tables"][0]
-            ids = " ".join(f"[{i}]" for i in (t.get("evidence_ids") or [])[:3])
+            ids = " ".join(f"[{i}]" for i in by_agent.get(r["agent"], [])[:3])  # real evidence ids, not agent names
             out.append(f"**{t['title']}** _({r['agent'].replace('_', ' ')})_ {ids}\n\n{_md_table(t)}\n")
     if sc.get("ml_drivers"):
         out.append("**ML opportunity drivers** (Δ success probability vs. median): " +
                    ", ".join(f"`{f}` {v:+.2f}" for f, v in sc["ml_drivers"][:4]))
     out.append("\n### 🧾 Evidence")
-    for e in state.get("evidence", [])[:14]:
+    all_ev = state.get("evidence", [])
+    shown = all_ev[:14] + [e for e in all_ev[14:] if e.get("trust") == "external"][:6]
+    for e in shown:
         link = f"[{e['title'][:70]}]({e['url']})" if e.get("url") else e["title"][:70]
         out.append(f"- **{e['id']}** · {e['source']} · _{e['trust']}_ — {link}")
     errs = [f"{r['agent']}: {r['error']}" for r in state.get("results", []) if r.get("error")]

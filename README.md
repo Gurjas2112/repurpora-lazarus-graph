@@ -20,7 +20,7 @@ A master agent fans out to market, trade, patent, clinical-trial, internal-RAG a
 <p align="center">
 <img alt="python" src="https://img.shields.io/badge/python-3.12-3776AB"/>
 <img alt="langgraph" src="https://img.shields.io/badge/LangGraph-1.2-1C3C3C"/>
-<img alt="tests" src="https://img.shields.io/badge/tests-99%20passing-2EA44F"/>
+<img alt="tests" src="https://img.shields.io/badge/tests-112%20passing-2EA44F"/>
 <img alt="deploy" src="https://img.shields.io/badge/deployed-Vercel%20%2B%20Railway-black"/>
 <img alt="license" src="https://img.shields.io/badge/license-MIT-blue"/>
 </p>
@@ -182,7 +182,7 @@ context budget.
 | **Read research and apply it** | [`essential_docs/`](essential_docs) papers (DrugRAG, production RAG, AHP product selection) → evidence-gated RAG and selection criteria |
 | **Cloud and containers** | AWS (EC2 GPU IaC, S3, Secrets Manager, CloudWatch via LocalStack), Docker Compose (10 services), Railway, Vercel |
 | **Vector DBs, embeddings, LangChain** | Supabase pgvector (HNSW index), nomic embeddings, LangChain + LangGraph 1.x |
-| **Testing** | 99 pytest tests (unit, ML workflow, SQL-agent attack corpus, admin RBAC, MCP, graph integration with a fake LLM, AWS emulator) + Playwright end-to-end recording |
+| **Testing** | 112 pytest tests (unit, ML workflow, SQL-agent attack corpus, admin RBAC, MCP, graph integration with a fake LLM, AWS emulator) + Playwright end-to-end recording |
 
 ---
 
@@ -242,6 +242,29 @@ as a **Model Context Protocol** server, so any MCP client can use them:
 | Safety | Every tool is annotated read-only. Per-user scoping applies to internal documents and archived reports. DNS-rebinding host checks. Every call is audited (`mcp_tool_call`). |
 
 Try it in the app at **`/developers`**: a built-in MCP console that shows the endpoint, the 401 challenge, `initialize`, the tool list, tool calls and the raw JSON-RPC wire log. Browser access is limited to allow-listed origins (DNS-rebinding protection). Code: [`mcp_server.py`](backend/src/repurpora/mcp_server.py), [`mcp-console.tsx`](frontend/src/components/developers/mcp-console.tsx).
+</details>
+
+<details><summary><b>🧩 Bring your own MCP servers into the chat (agent as MCP client)</b></summary>
+
+Repurpora's agent can also **call other MCP servers**, such as a licensed database the client already exposes over MCP.
+
+| Step | How |
+|---|---|
+| Admins register servers | Admin → **MCP servers**: HTTPS URL, optional vault secret *name* for a bearer token, tool allow-list, live "Test connection" (initialize + tools/list) |
+| Users opt in per chat | The **Tools** menu in the chat lists only approved servers |
+| The agent uses them | The planner adds an **External MCP tools** agent. The LLM sees the approved tools' schemas and picks up to 3 relevant calls. Results come back as cited **external** evidence and an "External Tool Findings" section in the brief. |
+
+| Safeguard | Detail |
+|---|---|
+| SSRF | HTTPS only; private, loopback, link-local and cloud-metadata addresses blocked |
+| Credentials | Never stored in the database or shown in the UI; only a vault secret name |
+| Arguments | Filtered to each tool's declared schema (hallucinated parameters are dropped) |
+| Output | Prompt-injection text in tool output is sanitised |
+| Limits | 3 calls and 30 s per call per run |
+| Audit | Every call is audited |
+
+The demo registers Repurpora's own MCP server as an "external" server using a machine-to-machine service token.
+Code: [`mcp_registry.py`](backend/src/repurpora/mcp_registry.py), `run_mcp` in [`workers.py`](backend/src/repurpora/agents/workers.py).
 </details>
 
 <details><summary><b>🛠 Admin panel (/admin)</b></summary>
@@ -358,7 +381,7 @@ cd backend && uv run python scripts/make_synthetic_internal_docs.py && uv run py
 ## Test and evaluate
 ```bash
 cd backend
-uv run pytest                                  # 99 tests (AWS tests auto-skip if LocalStack is off)
+uv run pytest                                  # 112 tests (AWS tests auto-skip if LocalStack is off)
 uv run python evals/run_evals.py --langsmith   # 12-question golden set → evals/results/latest.md
 uv run python evals/rag_bench.py               # chunking benchmark
 uv run python -m repurpora.ml.opportunity_scorer --train   # retrain + metrics
@@ -381,7 +404,7 @@ frontend/     Next.js landing + auth + Agent Chat UI, Playwright tests
 infra/        Caddy LLM proxy, AWS scripts (LocalStack bootstrap, EC2 provisioning, teardown)
 governance/   AI governance registry (manifest, model card, policies, controls, change log)
 docs/         spec, architecture, runbook, 5-slide deck
-app_screenshots_screen_recording/   33 step screenshots, research, admin and MCP videos, MCP session transcript, sample report
+app_screenshots_screen_recording/   38 step screenshots, research, admin, MCP server and MCP-client videos, MCP session transcript, sample report
 ```
 
 ## Honest limitations and next steps
